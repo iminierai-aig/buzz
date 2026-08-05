@@ -441,6 +441,15 @@ pub(super) fn terminate_runtime_receipt_with(
     ))
 }
 
+/// Build the Rust log filter inherited by every spawned ACP child.
+pub(super) fn child_rust_log_filter() -> String {
+    match std::env::var("RUST_LOG") {
+        Ok(existing) if existing.contains("buzz_acp") => existing,
+        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
+        _ => "buzz_acp=info".to_string(),
+    }
+}
+
 /// Replace a valid prior-session process before registering a new child for
 /// the same pair. The caller must hold the runtime transition lock so receipt
 /// inspection, termination, spawn, and registration cannot race shutdown or
