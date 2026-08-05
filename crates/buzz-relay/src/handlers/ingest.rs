@@ -162,6 +162,13 @@ pub fn reject_with_transport(transport: &'static str, reason: &'static str) {
     .increment(1);
 }
 
+fn valid_link_preview_text(value: &str, max: usize, allow_newlines: bool) -> bool {
+    value.len() <= max
+        && !value
+            .chars()
+            .any(|character| character.is_control() && !(allow_newlines && character == '\n'))
+}
+
 fn validate_link_preview_tags(event: &Event, media_base_url: &str) -> Result<(), String> {
     const MAX_SNAPSHOTS: usize = 8;
     const MAX_TITLE: usize = 300;
@@ -203,12 +210,12 @@ fn validate_link_preview_tags(event: &Event, media_base_url: &str) -> Result<(),
         {
             return Err("invalid link-preview canonical URL".into());
         }
-        for (value, max) in [
-            (&parts[4], MAX_TITLE),
-            (&parts[5], MAX_SITE),
-            (&parts[6], MAX_DESCRIPTION),
+        for (value, max, allow_newlines) in [
+            (&parts[4], MAX_TITLE, false),
+            (&parts[5], MAX_SITE, false),
+            (&parts[6], MAX_DESCRIPTION, true),
         ] {
-            if value.len() > max || value.chars().any(char::is_control) {
+            if !valid_link_preview_text(value, max, allow_newlines) {
                 return Err("invalid link-preview snapshot text".into());
             }
         }
@@ -3619,6 +3626,60 @@ mod tests {
             vec![&snapshot[..], &["link-preview", "none"][..]],
         ] {
             let event = make_event_with_tags(KIND_STREAM_MESSAGE, "https://example.com", &tags);
+            assert!(validate_link_preview_tags(&event, "https://media.example.com").is_err());
+        }
+    }
+
+    fn make_link_preview_event(title: &str, site: &str, description: &str) -> Event {
+        make_event_with_tags(
+            KIND_STREAM_MESSAGE,
+            "https://example.com",
+            &[&[
+                "link-preview",
+                "snapshot",
+                "1",
+                "https://example.com",
+                title,
+                site,
+                description,
+                "",
+                "",
+                "",
+                "",
+            ]],
+        )
+    }
+
+    #[test]
+    fn link_preview_snapshot_accepts_description_newlines() {
+        let event = make_link_preview_event(
+            "Example title",
+            "Example site",
+            "First paragraph\n\nSecond paragraph",
+        );
+
+        assert!(validate_link_preview_tags(&event, "https://media.example.com").is_ok());
+    }
+
+    #[test]
+    fn link_preview_snapshot_rejects_title_and_site_newlines() {
+        for (title, site) in [
+            ("Example\ntitle", "Example site"),
+            ("Example title", "Example\nsite"),
+        ] {
+            let event = make_link_preview_event(title, site, "Description");
+            assert!(validate_link_preview_tags(&event, "https://media.example.com").is_err());
+        }
+    }
+
+    #[test]
+    fn link_preview_snapshot_rejects_non_newline_controls_in_all_text_fields() {
+        for (title, site, description) in [
+            ("Example\ttitle", "Example site", "Description"),
+            ("Example title", "Example\rsite", "Description"),
+            ("Example title", "Example site", "Unsafe\tdescription"),
+        ] {
+            let event = make_link_preview_event(title, site, description);
             assert!(validate_link_preview_tags(&event, "https://media.example.com").is_err());
         }
     }
